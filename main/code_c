@@ -1,0 +1,212 @@
+#include <opencv2/opencv.hpp>
+#include <x264.h>
+#include <cstdio>
+#include <iostream>
+#include <vector>
+#include <mosquitto.h>
+#include <curl/curl.h>
+
+// Function to send a message to a Telegram chat using the Telegram bot API.
+void sendTelegramMessage(const char *message) {
+    CURL *curl;
+    CURLcode res;
+
+    // Initialize CURL for sending the request
+    curl = curl_easy_init();
+    if (curl) {
+        // Construct the API URL with the bot token and chat ID. Append the message to the URL.
+        char base_url[] = "https://api.telegram.org/botYOUR_BOT_TOKEN/sendMessage?chat_id=YOUR_CHAT_ID&text=";
+        char *url = malloc(strlen(base_url) + strlen(message) + 1); // Allocate memory for the URL
+
+        if (url == NULL) {
+            fprintf(stderr, "Malloc failed\n");
+            return;
+        }
+
+        strcpy(url, base_url);
+        strcat(url, message);
+
+        // Set CURL options and perform the request
+        curl_easy_setopt(curl, CURLOPT_URL, url);
+        curl_easy_setopt(curl, CURLOPT_FOLLOWLOCATION, 1L);
+        res = curl_easy_perform(curl);
+
+        // Check for errors
+        if (res != CURLE_OK) {
+            fprintf(stderr, "curl_easy_perform() failed: %s\n", curl_easy_strerror(res));
+        }
+
+        // Clean up
+        free(url);
+        curl_easy_cleanup(curl);
+    }
+}
+
+int main() {
+    // Initialize the MQTT library
+    mosquitto_lib_init();
+    struct mosquitto *mosq = mosquitto_new("motion_detector", true, NULL);
+    if (!mosq) {
+        fprintf(stderr, "Failed to create mosquitto instance\n");
+        return -1;
+    }
+
+    // Connect to the MQTT broker
+    int ret = mosquitto_connect(mosq, "localhost", 1883, 60);
+    if (ret != MOSQ_ERR_SUCCESS) {
+        mosquitto_destroy(mosq);
+        fprintf(stderr, "Failed to connect to MQTT broker\n");
+        return -1;
+    }
+
+    // Initialize CURL library for HTTP requests
+    curl_global_init(CURL_GLOBAL_ALL);
+
+    // Open the default camera for capturing frames
+    cv::VideoCapture capture(0);
+    if (!capture.isOpened()) {
+        fprintf(stderr, "Error: Camera not accessible\n");
+        return -1;
+    }
+
+    // Set frame dimensions for the video capture
+    int frame_width = 640;
+    int frame_height = 480;
+    capture.set(cv::CAP_PROP_FRAME_WIDTH, frame_width);
+    capture.set(cv::CAP_PROP_FRAME_HEIGHT, frame_height);
+
+    // Initialize the x264 encoder with specific parameters for live streaming
+    x264_param_t param;
+    x264_param_default_preset(&param, "veryfast", "zerolatency");
+    param.i_threads = 1;
+    param.i_width = frame_width;
+    param.i_height = frame_height;
+    param.i_fps_num = 25;
+    param.i_fps_den = 1;
+    param.i_csp = X264_CSP_I420;
+    param.rc.i_rc_method = X264_RC_CRF;
+    param.rc.f_rf_constant = 25;
+
+    x264_t *encoder = x264_encoder_open(&param);
+    if (!encoder) {
+        fprintf(stderr, "Error: x264 encoder not opened\n");
+        capture.release();
+        return -1;
+    }
+
+    // Allocate memory for the input and output pictures in the encoder
+    x264_picture_t pic_in, pic_out;
+    x264_picture_alloc(&pic_in, X264_CSP_I420, frame_width, frame_height);
+
+    // Open a pipe to FFmpeg for streaming the encoded video to an HLS server
+    FILE* ffmpeg = popen("ffmpeg -i - -c:v libx264 -f hls -hls_time 4 -hls_playlist_type event /var/www/html/hls/stream.m3u8", "w");
+    if (!ffmpeg) {
+        fprintf(stderr, "Failed to open pipe to FFmpeg\n");
+        x264_picture_clean(&pic_in);
+        x264_encoder_close(encoder);
+        capture.release();
+        return -1;
+    }
+
+    // Prepare for motion detection
+    cv::Mat refFrame;
+    cv::Mat gray, prevGray, frameDelta, thresh;
+    std::vector<std::vector<cv::Point>> contours;
+
+    // Capture the first frame as a reference for motion detection
+    if (!capture.read(refFrame)) {
+        fprintf(stderr, "Error: Could not read the initial frame.\n");
+        x264_picture_clean(&pic_in);
+        x264_encoder_close(encoder);
+        capture.release();
+        return -1;
+    }
+    cvtColor(refFrame, prevGray, cv::COLOR_BGR2GRAY);
+    GaussianBlur(prevGray, prevGray, cv::Size(21, 21), 0);
+
+    // Main loop for capturing frames, detecting motion, and streaming
+    while (true) {
+        cv::Mat frame;
+        if (!capture.read(frame)) {
+            fprintf(stderr, "Error: Could not read frame.\n");
+            break;
+        }
+        // Preprocess the frame for motion detection
+        cvtColor(frame, gray, cv::COLOR_BGR2GRAY);
+        GaussianBlur(gray, gray, cv::Size(21, 21), 0);
+
+        // Compute the difference between the current frame and the reference frame
+        absdiff(prevGray, gray, frameDelta);
+        threshold(frameDelta, thresh, 25, 255, cv::THRESH_BINARY);
+
+        // Dilate the thresholded image to fill in holes
+        dilate(thresh, thresh, cv::Mat(), cv::Point(-1, -1), 2);
+        findContours(thresh, contours, cv::RETR_EXTERNAL, cv::CHAIN_APPROX_SIMPLE);
+
+        bool motionDetected = false;
+
+        // Iterate over the contours to detect significant motion
+        for (size_t i = 0; i < contours.size(); i++) {
+            if (cv::contourArea(contours[i]) >= 500) {
+                motionDetected = true;
+                sendTelegramMessage("Motion Detected!");
+                cv::Rect boundingBox = cv::boundingRect(contours[i]);
+                rectangle(frame, boundingBox.tl(), boundingBox.br(), cv::Scalar(0, 255, 0), 2);
+            }
+        }
+
+        // If motion is detected, publish a message to MQTT
+        if (motionDetected) {
+            const char* message = "Motion Detected";
+            int message_length = strlen(message);
+            int publish_status = mosquitto_publish(mosq, NULL, "motion_detection", message_length, message, 0, false);
+            if (publish_status != MOSQ_ERR_SUCCESS) {
+                fprintf(stderr, "Failed to publish message: %s\n", mosquitto_strerror(publish_status));
+            }
+        }
+
+        // Convert the processed frame to YUV format and encode it
+        cv::Mat yuv_frame;
+        cvtColor(frame, yuv_frame, cv::COLOR_BGR2YUV_I420);
+        unsigned char* yuv = yuv_frame.data;
+        pic_in.img.plane[0] = yuv; // Y
+        pic_in.img.plane[1] = yuv + frame_width * frame_height; // U
+        pic_in.img.plane[2] = yuv + frame_width * frame_height * 5 / 4; // V
+        pic_in.img.i_stride[0] = frame_width;
+        pic_in.img.i_stride[1] = frame_width / 2;
+        pic_in.img.i_stride[2] = frame_width / 2;
+
+        // Encode the frame and stream it via FFmpeg
+        x264_nal_t *nals;
+        int i_nals;
+        int frame_size = x264_encoder_encode(encoder, &nals, &i_nals, &pic_in, &pic_out);
+        if (frame_size < 0) {
+            fprintf(stderr, "Error: Failed to encode frame\n");
+            break;
+        }
+
+        // Write the encoded frame to the FFmpeg pipe for streaming
+        if (frame_size > 0) {
+            fwrite(nals[0].p_payload, 1, frame_size, ffmpeg);
+        }
+
+        // Update the reference frame for the next iteration
+        prevGray = gray.clone();
+
+        // Check for user input to exit the program
+        char c = (char)cv::waitKey(25);
+        if (c == 27) break; // Exit loop if ESC is pressed
+    }
+
+    // Clean up resources before exiting
+    pclose(ffmpeg);
+    x264_picture_clean(&pic_in);
+    x264_encoder_close(encoder);
+    capture.release();
+    mosquitto_disconnect(mosq);
+    mosquitto_destroy(mosq);
+    mosquitto_lib_cleanup();
+    curl_global_cleanup();
+
+    return 0;
+}
