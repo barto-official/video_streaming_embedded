@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Live Stream</title>
+    <!-- These meta tags prevent caching in the browser to ensure live streaming works correctly. -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
+    <!-- HLS.js library is included for handling HLS (HTTP Live Streaming) -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+</head>
+<body>
+
+<!-- Video element where the stream will be displayed -->
+<video id="video" controls></video>
+
+<script>
+    // Get the video element by its ID
+    var video = document.getElementById('video');
+
+    // Check if HLS is supported in the browser
+    if (Hls.isSupported()) {
+        // Initialize HLS with configuration options
+        var hls = new Hls({
+            liveSyncDurationCount: 5,      // Number of segments kept in buffer
+            maxBufferLength: 40,           // Maximum buffer length in seconds
+            maxMaxBufferLength: 600,       // Maximum buffer length cap in seconds
+            enableWorker: true,            // Enable Web Workers for HLS.js
+            lowLatencyMode: true,          // Enable low latency mode
+        });
+
+        // Load the source of the HLS stream (URL to your .m3u8 playlist)
+        hls.loadSource('http://192.168.1.132/hls/stream.m3u8');
+
+        // Attach the media (video element) for playback
+        hls.attachMedia(video);
+
+        // Event listener when the manifest is parsed and ready to play
+        hls.on(Hls.Events.MANIFEST_PARSED, function () {
+            video.play();  // Play the video when ready
+        });
+
+        // Error handling for HLS.js
+        hls.on(Hls.Events.ERROR, function (event, data) {
+            // Check if the error is fatal (non-recoverable)
+            if (data.fatal) {
+                switch(data.type) {
+                    case Hls.ErrorTypes.NETWORK_ERROR:
+                        // Attempt to recover from network errors
+                        console.log("Network error encountered, trying to recover...");
+                        hls.startLoad();
+                        break;
+                    case Hls.ErrorTypes.MEDIA_ERROR:
+                        // Attempt to recover from media errors
+                        console.log("Media error encountered, trying to recover...");
+                        hls.recoverMediaError();
+                        break;
+                    default:
+                        // If the error is not recoverable, destroy the HLS instance
+                        console.log("Unrecoverable error encountered, destroying HLS instance...");
+                        hls.destroy();
+                        break;
+                }
+            } else if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
+                // Handle buffer stall errors by attempting to play the video again
+                console.log("Buffer stalled error, trying to play...");
+                video.play();
+            }
+        });
+    }
+</script>
+</body>
+</html>
