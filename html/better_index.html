@@ -1,0 +1,142 @@
+<!DOCTYPE html>
+<html style="font-size: 16px;" lang="en"><head>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta charset="utf-8">
+    <title>Demo</title>
+    <link rel="stylesheet" href="nicepage.css" media="screen">
+    <link rel="stylesheet" href="Page-2.css" media="screen">
+    <script class="u-script" type="text/javascript" src="jquery-1.9.1.min.js" defer=""></script>
+    <script class="u-script" type="text/javascript" src="nicepage.js" defer=""></script>
+    <meta name="generator" content="Nicepage 6.1.0, nicepage.com">
+    <link id="u-theme-google-font" rel="stylesheet" href="https://fonts.googleapis.com/css?family=Roboto:100,100i,300,300i,400,400i,500,500i,700,700i,900,900i|Open+Sans:300,300i,400,400i,500,500i,600,600i,700,700i,800,800i">
+    <!-- These meta tags prevent caching in the browser to ensure live streaming works correctly. -->
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
+    <meta http-equiv="Pragma" content="no-cache" />
+    <meta http-equiv="Expires" content="0" />
+
+    <!-- HLS.js library is included for handling HLS (HTTP Live Streaming) -->
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
+    
+    
+    <script type="application/ld+json">{
+		"@context": "http://schema.org",
+		"@type": "Organization",
+		"name": "",
+		"url": "/"}
+    </script>
+
+    <meta name="theme-color" content="#73a3de">
+    <meta property="og:title" content="Page 2">
+    <meta property="og:type" content="website">
+    <link rel="canonical" href="/">
+  <meta data-intl-tel-input-cdn-path="intlTelInput/">
+
+</head>
+
+  <body data-home-page="https://website6083415.nicepage.io/Page-2.html?version=9634bb39-19d9-7145-fa2f-df0dd954f19a" data-home-page-title="Page 2" data-path-to-root="./" data-include-products="false" class="u-body u-xl-mode" data-lang="en"> 
+    <section class="u-align-center u-black u-clearfix u-section-1" id="sec-ba1f">
+      <div class="u-clearfix u-sheet u-valign-middle u-sheet-1">
+        <h2 class="u-text u-text-1">Real-time Video Streaming using Raspberry Pi 4B</h2>
+        <p class="u-text u-text-2">This project streams vide in real-time from Raspberry PI camera using HTTP server
+        and HLS protocol. Video is encoded in x264 format and converted to YUV_I420. HLS protocol is handled by
+            FFmpeg.
+        </p>
+          <p class="u-text u-text-2">On top, motion detection algorithm via simple Gaussian Blur and binary
+              thresholding in OpenCV. Any detected motion triggers an alter sent to the Telegram channel and
+              published massage on the MQTT broker.
+          </p>
+        <p class="u-text u-text-2">Current buffering settings via Hls library:<br>
+            liveSyncDurationCount: 5      (Number of segments kept in buffer) <br>
+            maxBufferLength: 40           (Maximum buffer length in seconds)<br>
+            maxMaxBufferLength: 600       (Maximum buffer length cap in seconds)<br>
+            enableWorker: true            (Enable Web Workers for HLS.js)<br>
+            lowLatencyMode: true          (Enable low latency mode)<br></p>
+        <p class="u-text u-text-4">For more information & code visit <a
+                href="https://github.com/barto-official/video_streaming_embedded">GitHub page.</a></p>
+        <!--- <div class="u-video u-video-1">
+          <div class="embed-responsive embed-responsive-1">
+            <video id="video" controls style="position: absolute;top: 0;left: 0;width:640;height:480" class="embed-responsive-item"></video>
+          </div>
+        </div>
+      </div> --->
+	<div>
+          <div>
+            <video id="video" controls></video>
+          </div>
+        </div>
+      </div>
+
+    </section>
+
+    
+    <section class="u-backlink u-clearfix u-grey-80">
+        <span>Author: Bartosz Rzycki</span><br>
+      <a class="u-link" href="https://nicepage.com/website-templates" target="_blank">
+        <span>Website Templates</span>
+      </a>
+      <p class="u-text">
+        <span>created with</span>
+      </p>
+      <a class="u-link" href="" target="_blank">
+        <span>Website Builder Software</span>
+      </a>. 
+    </section>
+
+
+    <script>
+        // Get the video element by its ID
+        var video = document.getElementById('video');
+
+        // Check if HLS is supported in the browser
+        if (Hls.isSupported()) {
+            // Initialize HLS with configuration options
+            var hls = new Hls({
+                liveSyncDurationCount: 5,      // Number of segments kept in buffer
+                maxBufferLength: 40,           // Maximum buffer length in seconds
+                maxMaxBufferLength: 600,       // Maximum buffer length cap in seconds
+                enableWorker: true,            // Enable Web Workers for HLS.js
+                lowLatencyMode: true,          // Enable low latency mode
+            });
+
+            // Load the source of the HLS stream (URL to your .m3u8 playlist)
+            hls.loadSource('http://172.20.10.4/hls/stream.m3u8');
+	    //hls.loadSource('http://192.168.1.132/hls/stream.m3u8');
+
+            // Attach the media (video element) for playback
+            hls.attachMedia(video);
+
+            // Event listener when the manifest is parsed and ready to play
+            hls.on(Hls.Events.MANIFEST_PARSED, function () {
+                video.play();  // Play the video when ready
+            });
+
+            // Error handling for HLS.js
+            hls.on(Hls.Events.ERROR, function (event, data) {
+                // Check if the error is fatal (non-recoverable)
+                if (data.fatal) {
+                    switch(data.type) {
+                        case Hls.ErrorTypes.NETWORK_ERROR:
+                            // Attempt to recover from network errors
+                            console.log("Network error encountered, trying to recover...");
+                            hls.startLoad();
+                            break;
+                        case Hls.ErrorTypes.MEDIA_ERROR:
+                            // Attempt to recover from media errors
+                            console.log("Media error encountered, trying to recover...");
+                            hls.recoverMediaError();
+                            break;
+                        default:
+                            // If the error is not recoverable, destroy the HLS instance
+                            console.log("Unrecoverable error encountered, destroying HLS instance...");
+                            hls.destroy();
+                            break;
+                    }
+                } else if (data.details === Hls.ErrorDetails.BUFFER_STALLED_ERROR) {
+                    // Handle buffer stall errors by attempting to play the video again
+                    console.log("Buffer stalled error, trying to play...");
+                    video.play();
+                }
+            });
+        }
+    </script>
+</body></html>
