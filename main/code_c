@@ -16,7 +16,7 @@ void sendTelegramMessage(const char *message) {
     if (curl) {
         // Construct the API URL with the bot token and chat ID. Append the message to the URL.
         char base_url[] = "https://api.telegram.org/botYOUR_BOT_TOKEN/sendMessage?chat_id=YOUR_CHAT_ID&text=";
-        char *url = malloc(strlen(base_url) + strlen(message) + 1); // Allocate memory for the URL
+        char *url = (char *)malloc(strlen(base_url) + strlen(message) + 1); // Cast to char*
 
         if (url == NULL) {
             fprintf(stderr, "Malloc failed\n");
